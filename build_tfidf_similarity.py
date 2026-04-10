@@ -13,13 +13,13 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from moviegeeks.models import Movie, ItemDetail
+from school_items.models import Item
 from recommender.models import LdaSimilarity
 
 
 def build():
     print("Loading items...")
-    items = list(ItemDetail.objects.all().values('item_id', 'description_en', 'features_en', 'categories_en'))
+    items = list(Item.objects.all().values('item_id', 'description_en', 'features_en', 'categories_en'))
     print(f"Loaded {len(items)} items")
 
     # Build text corpus: combine description + features + categories

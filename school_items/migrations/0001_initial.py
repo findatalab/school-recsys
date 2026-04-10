@@ -12,35 +12,33 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name='Genre',
+            name='Category',
             fields=[
-                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=128)),
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('name', models.CharField(max_length=128, unique=True)),
             ],
+            options={
+                'ordering': ['name'],
+            },
         ),
         migrations.CreateModel(
-            name='ItemDetail',
+            name='Item',
             fields=[
                 ('item_id', models.CharField(max_length=32, primary_key=True, serialize=False, unique=True)),
+                ('title_en', models.CharField(blank=True, default='', max_length=512)),
+                ('title_ru', models.CharField(blank=True, default='', max_length=512)),
                 ('description_en', models.TextField(blank=True)),
                 ('features_en', models.TextField(blank=True)),
+                ('categories_en', models.CharField(blank=True, max_length=512)),
+                ('description_ru', models.TextField(blank=True)),
+                ('features_ru', models.TextField(blank=True)),
+                ('categories_ru', models.CharField(blank=True, max_length=512)),
                 ('price', models.FloatField(blank=True, null=True)),
                 ('average_rating', models.FloatField(blank=True, null=True)),
                 ('rating_number', models.IntegerField(default=0)),
-                ('categories_en', models.CharField(blank=True, max_length=512)),
             ],
             options={
                 'db_table': 'item_detail',
             },
-        ),
-        migrations.CreateModel(
-            name='Movie',
-            fields=[
-                ('movie_id', models.CharField(max_length=32, primary_key=True, serialize=False, unique=True)),
-                ('title', models.CharField(max_length=512)),
-                ('title_ru', models.CharField(blank=True, default='', max_length=512)),
-                ('year', models.IntegerField(null=True)),
-                ('genres', models.ManyToManyField(db_table='movie_genre', related_name='movies', to='moviegeeks.genre')),
-            ],
         ),
     ]

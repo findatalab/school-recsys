@@ -29,8 +29,8 @@ import pandas as pd
 from django.db.models import Count, Avg
 
 from analytics.models import Rating
-from moviegeeks.models import Movie, Genre, ItemDetail
 from recommender.models import Similarity
+from school_items.models import Item
 
 
 # -- Metrics ---------------------------------------------------------------
@@ -131,14 +131,15 @@ def get_content_based_recs(user_id, train_items, train_ratings_dict, num=20):
 
 
 def get_popularity_recs(train_items, num=20):
-    """Popularity from same category, excluding train items."""
-    movie = Movie.objects.filter(movie_id=train_items[0]).first() if train_items else None
-    if not movie:
+    """Popularity from the same item category, excluding train items."""
+    item = Item.objects.filter(item_id=train_items[0]).first() if train_items else None
+    if not item or not item.primary_category:
         return []
-    genre = movie.genres.first()
-    if not genre:
-        return []
-    same_cat = genre.movies.exclude(movie_id__in=train_items).values_list('movie_id', flat=True)
+
+    same_cat = Item.objects.filter(categories_en__icontains=item.primary_category) \
+        .exclude(item_id__in=train_items) \
+        .values_list('item_id', flat=True)
+
     pop = Rating.objects.filter(movie_id__in=same_cat) \
         .values('movie_id').annotate(cnt=Count('user_id')).order_by('-cnt')[:num]
     return [p['movie_id'] for p in pop]
@@ -370,7 +371,7 @@ def evaluate_model(model_name, rec_fn, test_data, k_values=[5, 10, 20]):
             print(f"    ... {evaluated} users done ({time.time()-t0:.1f}s)")
 
     elapsed = time.time() - t0
-    total_items = Movie.objects.count()
+    total_items = Item.objects.count()
     coverage = len(all_recommended) / total_items if total_items > 0 else 0
 
     results = {'model': model_name, 'evaluated': evaluated, 'errors': errors,
