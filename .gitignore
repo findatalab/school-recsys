@@ -13,5 +13,3 @@ analytics/migrations/*
 data
 models/
 .claude/
-office_school_items.csv
-office_school_interactions.csv
