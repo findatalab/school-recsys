@@ -30,24 +30,31 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Создание базы данных
+### 2. Создание базы данных и загрузка данных
 
 ```bash
 python manage.py makemigrations
 python manage.py migrate --run-syncdb
 ```
 
-### 3. Загрузка данных
-
 Файлы `office_school_items.csv` и `office_school_interactions.csv` должны лежать в корне проекта.
 
 ```bash
 # Загрузка товаров (23 000+ записей)
-python populate_items.py
+python populate_office_school_items.py
 
 # Загрузка оценок пользователей (700 000+ записей)
-python populate_ratings.py
+python populate_office_school_ratings.py
 ```
+
+### 3. Запуск сервера
+
+```bash
+python manage.py runserver 127.0.0.1:8000
+```
+
+Сайт доступен по адресу: [http://127.0.0.1:8000](http://127.0.0.1:8000)
+
 
 ### 4. Построение матрицы сходства (Item-based CF)
 
@@ -67,15 +74,7 @@ python builder/tfidf_similarity_builder.py
 python train_implicit_models.py
 ```
 
-### 7. Запуск сервера
-
-```bash
-python manage.py runserver 127.0.0.1:8000
-```
-
-Сайт доступен по адресу: [http://127.0.0.1:8000](http://127.0.0.1:8000)
-
-## Оценка моделей
+### 7. Оценка моделей
 
 Скрипт `evaluate_models.py` вычисляет метрики Precision@K, Recall@K, NDCG@K, MAP@K, Hit Rate@K и Coverage для всех моделей:
 

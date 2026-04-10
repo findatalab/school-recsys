@@ -11,8 +11,29 @@ from gensim import models
 
 from analytics.models import Rating, Cluster
 from collector.models import Log
-from moviegeeks.models import Movie, Genre
 from recommender.models import SeededRecs, Similarity
+from school_items.models import Category, Item
+
+
+def _display_title(item):
+    return item.title_ru or item.title_en or item.item_id
+
+
+def _item_categories(item):
+    return [item.primary_category] if item and item.primary_category else []
+
+
+def _all_category_names():
+    category_names = list(Category.objects.values_list('name', flat=True).distinct())
+    if category_names:
+        return category_names
+
+    return sorted({
+        item.primary_category
+        for item in Item.objects.all().only('categories_en')
+        if item.primary_category
+    })
+
 
 def index(request):
     context_dict = {}
@@ -22,7 +43,7 @@ def index(request):
 def user(request, user_id):
     user_ratings = Rating.objects.filter(user_id=user_id).order_by('-rating')
 
-    movies = Movie.objects.filter(movie_id__in=user_ratings.values('movie_id'))
+    items = Item.objects.filter(item_id__in=user_ratings.values('movie_id'))
     log = Log.objects.filter(user_id=user_id).order_by('-created').values()[:20]
 
     cluster = Cluster.objects.filter(user_id=user_id).first()
@@ -36,22 +57,23 @@ def user(request, user_id):
     else:
         user_avg = 0
 
-    genres_ratings = {g['name']: 0 for g in Genre.objects.all().values('name').distinct()}
-    genres_count = {g['name']: 0 for g in Genre.objects.all().values('name').distinct()}
+    category_names = _all_category_names()
+    genres_ratings = {name: 0 for name in category_names}
+    genres_count = {name: 0 for name in category_names}
 
-    for movie in movies:
-        id = movie.movie_id
-
-        rating = ratings[id]
+    for item in items:
+        item_id = item.item_id
+        rating = ratings.get(item_id)
+        if rating is None:
+            continue
 
         r = rating.rating
         sum_rating += r
-        movie_dtos.append(MovieDto(id, movie.title, r))
-        for genre in movie.genres.all():
-
-            if genre.name in genres_ratings.keys():
-                genres_ratings[genre.name] += r - user_avg
-                genres_count[genre.name] += 1
+        movie_dtos.append(MovieDto(item_id, _display_title(item), r))
+        for category_name in _item_categories(item):
+            if category_name in genres_ratings:
+                genres_ratings[category_name] += r - user_avg
+                genres_count[category_name] += 1
 
     max_value = max(genres_ratings.values())
     max_value = max(max_value, 1)
@@ -83,7 +105,7 @@ def user(request, user_id):
 
 def content(request, content_id):
     print(content_id)
-    movie = Movie.objects.filter(movie_id=content_id).first()
+    item = Item.objects.filter(item_id=content_id).first()
     user_ratings = Rating.objects.filter(movie_id=content_id)
     ratings = user_ratings.values('rating')
     logs = Log.objects.filter(content_id=content_id).order_by('-created').values()[:20]
@@ -94,13 +116,11 @@ def content(request, content_id):
     movie_title = 'No Title'
     agv_rating = 0
     genre_names = []
-    if movie is not None:
-        movie_genres = movie.genres.all() if movie is not None else []
-        genre_names = list(movie_genres.values('name'))
-
+    if item is not None:
+        genre_names = [{'name': name} for name in _item_categories(item)]
         ratings = list(r['rating'] for r in ratings)
-        agv_rating = sum(ratings)/len(ratings)
-        movie_title = movie.title
+        agv_rating = (sum(ratings) / len(ratings)) if ratings else 0
+        movie_title = _display_title(item)
 
     context_dict = {
         'title': movie_title,
@@ -133,27 +153,29 @@ def cluster(request, cluster_id):
 
     members = Cluster.objects.filter(cluster_id=cluster_id)
     member_ratings = Rating.objects.filter(user_id__in=members.values('user_id'))
-    movies = Movie.objects.filter(movie_id__in=member_ratings.values('movie_id'))
+    items = Item.objects.filter(item_id__in=member_ratings.values('movie_id'))
 
     ratings = {r.movie_id: r for r in member_ratings}
 
     sum_rating = 0
 
-    genres = {g['name']: 0 for g in Genre.objects.all().values('name').distinct()}
-    for movie in movies:
-        id = movie.movie_id
-        rating = ratings[id]
+    genres = {name: 0 for name in _all_category_names()}
+    for item in items:
+        item_id = item.item_id
+        rating = ratings.get(item_id)
+        if rating is None:
+            continue
 
         r = rating.rating
         sum_rating += r
 
-        for genre in movie.genres.all():
+        for category_name in _item_categories(item):
+            if category_name in genres:
+                genres[category_name] += r
 
-            if genre.name in genres.keys():
-                genres[genre.name] += r
-
-    max_value = max(genres.values())
-    genres = {key: value / max_value for key, value in genres.items()}
+    max_value = max(genres.values()) if genres else 1
+    max_value = max(max_value, 1)
+    genres = {key: value / max_value for key, value in genres.items()} if genres else {}
 
     context_dict = {
         'genres': genres,
@@ -165,7 +187,7 @@ def cluster(request, cluster_id):
     return render(request, 'analytics/cluster.html', context_dict)
 
 def get_genres():
-    return Genre.objects.all().values('name').distinct()
+    return [{'name': name} for name in _all_category_names()]
 
 class MovieDto(object):
     def __init__(self, movie_id, title, rating):
@@ -175,21 +197,26 @@ class MovieDto(object):
 
 
 def top_content(request):
+    top_rows = list(
+        Log.objects.filter(event='buy')
+        .values('content_id')
+        .annotate(sold=Count('id'))
+        .order_by('-sold')[:10]
+    )
 
-    cursor = connection.cursor()
-    cursor.execute('SELECT \
-                        content_id,\
-                        mov.title,\
-                        count(*) as sold\
-                    FROM    collector_log log\
-                    JOIN    moviegeeks_movie mov ON CAST(log.content_id AS INTEGER) = CAST(mov.movie_id AS INTEGER)\
-                    WHERE 	event like \'buy\' \
-                    GROUP BY content_id, mov.title \
-                    ORDER BY sold desc \
-                    LIMIT 10 \
-        ')
+    titles = {
+        item.item_id: _display_title(item)
+        for item in Item.objects.filter(item_id__in=[row['content_id'] for row in top_rows])
+    }
 
-    data = dictfetchall(cursor)
+    data = [
+        {
+            'content_id': row['content_id'],
+            'title': titles.get(row['content_id'], row['content_id']),
+            'sold': row['sold'],
+        }
+        for row in top_rows
+    ]
     return JsonResponse(data, safe=False)
 
 def clusters(request):

@@ -15,7 +15,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from scipy.sparse import csr_matrix
 from tqdm import tqdm
 
-from moviegeeks.models import ItemDetail
+from school_items.models import Item
 from recommender.models import LdaSimilarity
 
 
@@ -26,7 +26,7 @@ BATCH_SIZE = 500000  # Bulk create batch size
 
 def build():
     print("Loading item details...")
-    items = list(ItemDetail.objects.all().values_list(
+    items = list(Item.objects.all().values_list(
         'item_id', 'description_en', 'features_en', 'categories_en'
     ))
     print(f"Loaded {len(items)} items")

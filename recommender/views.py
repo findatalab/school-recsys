@@ -9,12 +9,30 @@ from django.http import JsonResponse
 
 from analytics.models import Rating
 from collector.models import Log
-from moviegeeks.models import Movie, Genre, ItemDetail
 from recommender.models import SeededRecs, Similarity
+from school_items.models import Item
 from recs.neighborhood_based_recommender import NeighborhoodBasedRecs
 from recs.popularity_recommender import PopularityBasedRecs
 
 logger = logging.getLogger(__name__)
+
+
+def _display_title(item):
+    return item.title_ru or item.title_en or item.item_id
+
+
+def _same_category_items(item, exclude_ids=None):
+    if not item:
+        return Item.objects.none()
+
+    category_name = item.primary_category
+    if not category_name:
+        return Item.objects.none()
+
+    qs = Item.objects.filter(categories_en__icontains=category_name)
+    if exclude_ids:
+        qs = qs.exclude(item_id__in=exclude_ids)
+    return qs
 
 
 def _normalize_tuple_recs(sorted_items):
@@ -58,14 +76,18 @@ def chart(request, take=10):
     sorted_items = PopularityBasedRecs().recommend_items_from_log(take)
     ids = [i['content_id'] for i in sorted_items]
 
-    ms = {m['movie_id']: m['title'] for m in
-          Movie.objects.filter(movie_id__in=ids).values('title', 'movie_id')}
+    titles = {
+        item.item_id: _display_title(item)
+        for item in Item.objects.filter(item_id__in=ids)
+    }
 
-    if len(ms) > 0:
-        sorted_items = [{'movie_id': i['content_id'],
-                          'title': ms[i['content_id']]} for i in sorted_items]
-    else:
-        sorted_items = []
+    sorted_items = [
+        {
+            'movie_id': item['content_id'],
+            'title': titles.get(item['content_id'], item['content_id']),
+        }
+        for item in sorted_items
+    ]
     data = {
         'data': sorted_items
     }
@@ -257,16 +279,11 @@ def recs_cf(request, user_id, num=6):
 
 def recs_pop(request, content_id, num=6):
     """Popularity-based recs from the same category as the given item."""
-    movie = Movie.objects.filter(movie_id=content_id).first()
-    if not movie:
+    item = Item.objects.filter(item_id=content_id).first()
+    if not item:
         return JsonResponse({'data': []}, safe=False)
 
-    genre = movie.genres.first()
-    if not genre:
-        return JsonResponse({'data': []}, safe=False)
-
-    same_cat_ids = genre.movies.exclude(movie_id=content_id) \
-        .values_list('movie_id', flat=True)
+    same_cat_ids = _same_category_items(item, exclude_ids=[content_id]).values_list('item_id', flat=True)
 
     pop_items = Rating.objects.filter(movie_id__in=same_cat_ids) \
         .values('movie_id') \
@@ -288,18 +305,11 @@ def recs_item_similarity(request, content_id, num=6):
 
 def _category_based_recs(content_id, num=6):
     """Content-based fallback: items from the same category, sorted by rating."""
-    movie = Movie.objects.filter(movie_id=content_id).first()
-    if not movie:
+    item = Item.objects.filter(item_id=content_id).first()
+    if not item:
         return []
 
-    genre = movie.genres.first()
-    if not genre:
-        return []
-
-    same_cat_ids = list(genre.movies.exclude(movie_id=content_id)
-                        .values_list('movie_id', flat=True))
-
-    top_items = ItemDetail.objects.filter(item_id__in=same_cat_ids) \
+    top_items = _same_category_items(item, exclude_ids=[content_id]) \
         .exclude(average_rating__isnull=True) \
         .order_by('-average_rating', '-rating_number')[:num]
 
@@ -313,18 +323,31 @@ def _cb_user_fallback(user_id, num=6):
     if not rated_ids:
         return []
 
-    # Find categories of items the user rated
-    genre_ids = list(Genre.objects.filter(movies__movie_id__in=rated_ids)
-                     .values_list('id', flat=True).distinct()[:5])
-    if not genre_ids:
+    category_counts = {}
+    for item in Item.objects.filter(item_id__in=rated_ids):
+        category_name = item.primary_category
+        if category_name:
+            category_counts[category_name] = category_counts.get(category_name, 0) + 1
+
+    top_categories = [
+        category_name
+        for category_name, _ in sorted(category_counts.items(), key=lambda x: (-x[1], x[0]))[:5]
+    ]
+    if not top_categories:
         return []
 
-    # Get a limited set of candidate items from those categories
-    cat_item_ids = list(Movie.objects.filter(genres__id__in=genre_ids)
-                        .exclude(movie_id__in=rated_ids)
-                        .values_list('movie_id', flat=True).distinct()[:500])
+    category_query = Q()
+    for category_name in top_categories:
+        category_query |= Q(categories_en__icontains=category_name)
 
-    top_items = ItemDetail.objects.filter(item_id__in=cat_item_ids) \
+    cat_item_ids = list(
+        Item.objects.filter(category_query)
+        .exclude(item_id__in=rated_ids)
+        .values_list('item_id', flat=True)
+        .distinct()[:500]
+    )
+
+    top_items = Item.objects.filter(item_id__in=cat_item_ids) \
         .exclude(average_rating__isnull=True) \
         .order_by('-average_rating', '-rating_number')[:num]
 
