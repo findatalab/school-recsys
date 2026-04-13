@@ -37,7 +37,7 @@ python manage.py makemigrations
 python manage.py migrate --run-syncdb
 ```
 
-Файлы `office_school_items.csv` и `office_school_interactions.csv` должны лежать в корне проекта.
+Датасеты находятся в папке `data/`:
 
 ```bash
 # Загрузка товаров (23 000+ записей)
@@ -79,20 +79,29 @@ python train_implicit_models.py
 Скрипт `evaluate_models.py` вычисляет метрики Precision@K, Recall@K, NDCG@K, MAP@K, Hit Rate@K и Coverage для всех моделей:
 
 ```bash
-python evaluate_models.py --users 200 --k 5 10 20
+python evaluate_models.py --users 100000 --min-ratings 5 --k 5 10
 ```
 
-Результаты сохраняются в `evaluation_results.csv`.
+Скрипт автоматически переобучает MF-модели (ALS, BPR, SVD) только на train-данных, чтобы исключить утечку данных. Сплит сохраняется в `data/splits/split.json`, результаты — в `data/results/evaluation_results.csv`.
+
+Для повторной оценки на том же сплите:
+
+```bash
+python evaluate_models.py --load-split data/splits/split.json --k 5 10
+```
 
 ## Структура проекта
 
 ```
-├── office_school_items.csv        # Датасет товаров
-├── office_school_interactions.csv # Датасет оценок
-├── populate_items.py              # Скрипт загрузки товаров в БД
-├── populate_ratings.py            # Скрипт загрузки оценок в БД
-├── train_implicit_models.py       # Обучение ALS, BPR, SVD
-├── evaluate_models.py             # Оценка всех моделей
+├── data/
+│   ├── office_school_items.csv        # Датасет товаров
+│   ├── office_school_interactions.csv # Датасет оценок
+│   ├── results/                       # Результаты оценки (gitignored)
+│   └── splits/                        # Train/test сплиты (gitignored)
+├── populate_office_school_items.py    # Скрипт загрузки товаров в БД
+├── populate_office_school_ratings.py  # Скрипт загрузки оценок в БД
+├── train_implicit_models.py           # Обучение ALS, BPR, SVD
+├── evaluate_models.py                 # Оценка всех моделей (с переобучением на train)
 ├── builder/
 │   ├── item_similarity_calculator.py  # Построение Item-based CF
 │   └── tfidf_similarity_builder.py    # Построение TF-IDF сходства
@@ -100,14 +109,14 @@ python evaluate_models.py --users 200 --k 5 10 20
 │   ├── als_recommender.py             # ALS (implicit)
 │   ├── implicit_bpr_recommender.py    # BPR (implicit)
 │   ├── svd_recommender.py             # SVD (scipy)
-│   ├── neighborhood_based_recommender.py  # User-based CF
+│   ├── neighborhood_based_recommender.py  # Neighborhood CF
 │   ├── content_based_recommender.py   # Content-Based (LDA/TF-IDF)
 │   ├── fwls_recommender.py            # Hybrid FWLS
 │   └── popularity_recommender.py      # Popularity baseline
-├── moviegeeks/                    # Django app: модели товаров
-├── analytics/                     # Django app: рейтинги
-├── recommender/                   # Django app: API рекомендаций
-└── templates/                     # HTML шаблоны
+├── school_items/                      # Django app: модели товаров
+├── analytics/                         # Django app: рейтинги
+├── recommender/                       # Django app: API рекомендаций
+└── templates/                         # HTML шаблоны
 ```
 
 ## Данные

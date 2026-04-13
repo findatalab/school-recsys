@@ -176,7 +176,7 @@ class EvaluationRunner(object):
 
         additional_training_data = test_temp[~test_temp.index.isin(test.index)]
 
-        train = train.append(additional_training_data)
+        train = pd.concat([train, additional_training_data])
 
         return test, train
 
@@ -188,7 +188,7 @@ def evaluate_pop_recommender():
     min_rank = 5
 
     timestr = time.strftime("%Y%m%d-%H%M%S")
-    file_name = '{}-pop.csv'.format(timestr)
+    file_name = os.path.join('data', 'results', '{}-pop.csv'.format(timestr))
 
     with open(file_name, 'a', 1) as logfile:
         logfile.write("ar, map, mae, min_overlap, min_sim, K, min_num_of_ratings, min_rank\n")
@@ -223,7 +223,7 @@ def evaluate_cf_recommender():
     min_rank = 5
 
     timestr = time.strftime("%Y%m%d-%H%M%S")
-    file_name = '{}-cf.csv'.format(timestr)
+    file_name = os.path.join('data', 'results', '{}-cf.csv'.format(timestr))
 
     with open(file_name, 'a', 1) as logfile:
         logfile.write("ar, map, mae, min_overlap, min_sim, K, min_num_of_ratings, min_rank\n")
@@ -254,7 +254,7 @@ def evaluate_cb_recommender():
     min_rank = 0
 
     timestr = time.strftime("%Y%m%d-%H%M%S")
-    file_name = '{}-cb-k.csv'.format(timestr)
+    file_name = os.path.join('data', 'results', '{}-cb-k.csv'.format(timestr))
 
     with open(file_name, 'a', 1) as logfile:
         logfile.write("ar, map, mae, k, min_sim, min_num_of_ratings, min_rank\n")
@@ -288,7 +288,7 @@ def evaluate_fwls_recommender():
     min_rank = 5
     number_test_users = 1000
     timestr = time.strftime("%Y%m%d-%H%M%S")
-    file_name = '{}-fwls.csv'.format(timestr)
+    file_name = os.path.join('data', 'results', '{}-fwls.csv'.format(timestr))
 
     with open(file_name, 'a', 1) as logfile:
         logfile.write("ar, map, mae, min_overlap, min_sim, K, min_num_of_ratings, min_rank, data_sample\n")
@@ -324,7 +324,7 @@ def evaluate_funksvd_recommender():
     save_path = './models/funkSVD/'
     K = 20
     timestr = time.strftime("%Y%m%d-%H%M%S")
-    file_name = '{}-funksvd-k.csv'.format(timestr)
+    file_name = os.path.join('data', 'results', '{}-funksvd-k.csv'.format(timestr))
 
     with open(file_name, 'a', 1) as logfile:
         logfile.write("rak,pak,mae,k\n")
@@ -360,7 +360,7 @@ def evaluate_bpr_recommender():
     save_path = './models/bpr/'
 
     timestr = time.strftime("%Y%m%d-%H%M%S")
-    file_name = '{}-bpr-k.csv'.format(timestr)
+    file_name = os.path.join('data', 'results', '{}-bpr-k.csv'.format(timestr))
 
     with open(file_name, 'a', 1) as logfile:
         logfile.write("ar, map, mae, N, error, factors, number_of_iterations\n")

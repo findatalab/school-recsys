@@ -30,7 +30,7 @@ def delete_db():
 def populate():
     csv_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        'office_school_items.csv',
+        'data', 'office_school_items.csv',
     )
 
     with open(csv_path, newline='', encoding='utf-8-sig') as f:

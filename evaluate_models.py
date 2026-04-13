@@ -8,12 +8,16 @@ Methodology:
   Ask each model for top-K from remaining items.
   A recommendation is "relevant" if in held-out set with rating >= 4.0.
 
+The train/test split is saved to data/splits/ for reproducibility.
+Use --load-split to reuse a previously saved split.
+
 IMPORTANT: Models must exclude only TRAIN items (not all DB ratings),
 otherwise test items get filtered out and metrics are always 0.
 """
 import os
 import sys
 import time
+import json
 import random
 import argparse
 from collections import defaultdict
@@ -130,19 +134,29 @@ def get_content_based_recs(user_id, train_items, train_ratings_dict, num=20):
     return [r[0] for r in result[:num]]
 
 
+_pop_cache = {}
+
+
 def get_popularity_recs(train_items, num=20):
     """Popularity from the same item category, excluding train items."""
     item = Item.objects.filter(item_id=train_items[0]).first() if train_items else None
     if not item or not item.primary_category:
         return []
 
-    same_cat = Item.objects.filter(categories_en__icontains=item.primary_category) \
-        .exclude(item_id__in=train_items) \
-        .values_list('item_id', flat=True)
+    cat = item.primary_category
+    if cat not in _pop_cache:
+        same_cat = list(
+            Item.objects.filter(categories_en__icontains=cat)
+            .values_list('item_id', flat=True)
+        )
+        pop = list(
+            Rating.objects.filter(movie_id__in=same_cat)
+            .values('movie_id').annotate(cnt=Count('user_id')).order_by('-cnt')[:200]
+        )
+        _pop_cache[cat] = [p['movie_id'] for p in pop]
 
-    pop = Rating.objects.filter(movie_id__in=same_cat) \
-        .values('movie_id').annotate(cnt=Count('user_id')).order_by('-cnt')[:num]
-    return [p['movie_id'] for p in pop]
+    train_set = set(train_items)
+    return [mid for mid in _pop_cache[cat] if mid not in train_set][:num]
 
 
 # -- Matrix factorization models (compute scores directly, exclude only train) --
@@ -186,10 +200,9 @@ def _get_model(name):
                 U = np.load(os.path.join(svd_dir, 'U.npy'))
                 sigma = np.load(os.path.join(svd_dir, 'sigma.npy'))
                 Vt = np.load(os.path.join(svd_dir, 'Vt.npy'))
-                mean = np.load(os.path.join(svd_dir, 'user_ratings_mean.npy'))
-                predicted = U @ np.diag(sigma) @ Vt
-                _cached_models[name] = (predicted, mean)
-                print(f"  Loaded SVD model")
+                U_sigma = U * sigma[np.newaxis, :]
+                _cached_models[name] = (U_sigma, Vt)
+                print(f"  Loaded SVD model (k={U.shape[1]})")
             elif name == 'cf':
                 from recs.neighborhood_based_recommender import NeighborhoodBasedRecs
                 _cached_models[name] = NeighborhoodBasedRecs(min_sim=0.0)
@@ -240,15 +253,15 @@ def get_bpr_recs(user_id, train_items, num=20):
 
 
 def get_svd_recs(user_id, train_items, num=20):
-    """SVD: use precomputed predicted matrix, exclude only train_items."""
+    """SVD: pure latent factor ranking."""
     data = _get_model('svd')
     user_to_idx, item_map, item_to_idx = _load_mappings()
     if data is None or user_to_idx is None or user_id not in user_to_idx:
         return []
 
-    predicted, mean = data
+    U_sigma, Vt = data
     user_idx = user_to_idx[user_id]
-    scores = predicted[user_idx] + mean[user_idx]
+    scores = U_sigma[user_idx] @ Vt
 
     train_indices = set(item_to_idx[iid] for iid in train_items if iid in item_to_idx)
     for idx in train_indices:
@@ -258,16 +271,19 @@ def get_svd_recs(user_id, train_items, num=20):
     return [item_map[idx] for idx in top_idx if idx in item_map]
 
 
-def get_neighborhood_cf_recs(user_id, train_items, num=20):
-    """Neighborhood CF - uses DB ratings internally (known limitation)."""
+def get_neighborhood_cf_recs(user_id, train_items, train_ratings_dict, num=20):
+    """Neighborhood CF - uses only train items (not full DB)."""
     m = _get_model('cf')
     if not m:
         return []
     try:
-        items = m.recommend_items(user_id, num * 2)
-        # Post-filter: keep items NOT in train_items (allow test items through)
-        train_set = set(train_items)
-        return [item[0] for item in items if item[0] not in train_set][:num]
+        # Build active_user_items in the format recommend_items_by_ratings expects
+        active_user_items = [
+            {'movie_id': iid, 'rating': float(train_ratings_dict.get(iid, 3.0)), 'id': iid}
+            for iid in train_items
+        ]
+        items = m.recommend_items_by_ratings(user_id, active_user_items, num=num)
+        return [item[0] for item in items]
     except Exception:
         return []
 
@@ -292,6 +308,45 @@ def get_fwls_recs(user_id, train_items, train_ratings_dict, num=20):
 
 # -- Main evaluation -------------------------------------------------------
 
+SPLIT_DIR = os.path.join('data', 'splits')
+
+
+def save_split(test_data, path=None):
+    """Save train/test split to JSON for reproducibility."""
+    path = path or os.path.join(SPLIT_DIR, 'split.json')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    serializable = {}
+    for user_id, (train_items, train_ratings_dict, test_relevant) in test_data.items():
+        serializable[user_id] = {
+            'train_items': train_items,
+            'train_ratings': {k: float(v) for k, v in train_ratings_dict.items()},
+            'test_relevant': test_relevant,
+        }
+
+    with open(path, 'w') as f:
+        json.dump(serializable, f, indent=2)
+    print(f"Split saved to {path} ({len(serializable)} users)")
+
+
+def load_split(path=None):
+    """Load a previously saved train/test split."""
+    path = path or os.path.join(SPLIT_DIR, 'split.json')
+    with open(path) as f:
+        raw = json.load(f)
+
+    test_data = {}
+    for user_id, data in raw.items():
+        test_data[user_id] = (
+            data['train_items'],
+            {k: float(v) for k, v in data['train_ratings'].items()},
+            data['test_relevant'],
+        )
+
+    print(f"Loaded split from {path} ({len(test_data)} users)")
+    return test_data
+
+
 def prepare_test_data(min_ratings=10, test_fraction=0.2, max_users=500, seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -309,25 +364,39 @@ def prepare_test_data(min_ratings=10, test_fraction=0.2, max_users=500, seed=42)
 
     print(f"Selected {len(users)} test users (min {min_ratings} ratings each)")
 
+    # Fetch all ratings — filter in Python to avoid SQLite variable limit
+    users_set = set(users)
+    all_ratings = [
+        r for r in Rating.objects.all().values('user_id', 'movie_id', 'rating')
+        if r['user_id'] in users_set
+    ]
+
+    # Group by user
+    user_ratings = defaultdict(list)
+    for r in all_ratings:
+        user_ratings[r['user_id']].append(r)
+
     test_data = {}
     for user_id in users:
-        ratings = list(
-            Rating.objects.filter(user_id=user_id)
-            .values('movie_id', 'rating')
-            .order_by('?')
-        )
+        ratings = user_ratings[user_id]
+        random.shuffle(ratings)
+
         n_test = max(1, int(len(ratings) * test_fraction))
         test_ratings = ratings[:n_test]
         train_ratings = ratings[n_test:]
 
         train_items = [r['movie_id'] for r in train_ratings]
         train_ratings_dict = {r['movie_id']: r['rating'] for r in train_ratings}
-        test_relevant = [r['movie_id'] for r in test_ratings if r['rating'] >= 4.0]
+        test_relevant = [r['movie_id'] for r in test_ratings if float(r['rating']) >= 4.0]
 
         if test_relevant:
             test_data[user_id] = (train_items, train_ratings_dict, test_relevant)
 
     print(f"Users with relevant test items: {len(test_data)}")
+
+    # Auto-save split for reproducibility
+    save_split(test_data)
+
     return test_data
 
 
@@ -385,28 +454,91 @@ def evaluate_model(model_name, rec_fn, test_data, k_values=[5, 10, 20]):
     return results
 
 
+def _retrain_mf_models(test_data):
+    """Retrain ALS, BPR, SVD on train data only (no data leakage)."""
+    import pickle
+    from scipy.sparse import coo_matrix
+
+    print("\n" + "=" * 70)
+    print("RETRAINING MODELS ON TRAIN DATA ONLY")
+    print("=" * 70)
+
+    # Build train-only DataFrame
+    rows = []
+    for user_id, (train_items, train_ratings_dict, _) in test_data.items():
+        for item_id, rating in train_ratings_dict.items():
+            rows.append({'user_id': user_id, 'movie_id': item_id, 'rating': float(rating)})
+
+    import pandas as pd
+    df = pd.DataFrame(rows)
+    print(f"Train-only data: {len(df)} ratings, {df['user_id'].nunique()} users, {df['movie_id'].nunique()} items")
+
+    df['user_id'] = df['user_id'].astype('category')
+    df['movie_id'] = df['movie_id'].astype('category')
+
+    user_map = dict(enumerate(df['user_id'].cat.categories))
+    item_map = dict(enumerate(df['movie_id'].cat.categories))
+    user_to_idx = {v: k for k, v in user_map.items()}
+    item_to_idx = {v: k for k, v in item_map.items()}
+
+    sparse_user_item = coo_matrix(
+        (df['rating'].astype(float),
+         (df['user_id'].cat.codes, df['movie_id'].cat.codes))
+    ).tocsr()
+
+    model_dir = './models'
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Save mappings
+    for name, obj in [('user_map', user_map), ('item_map', item_map),
+                      ('user_to_idx', user_to_idx), ('item_to_idx', item_to_idx)]:
+        with open(os.path.join(model_dir, f'{name}.pkl'), 'wb') as f:
+            pickle.dump(obj, f)
+
+    # Retrain all three models
+    from train_implicit_models import train_als, train_bpr, train_svd
+    train_als(sparse_user_item, os.path.join(model_dir, 'als'), use_gpu=False)
+    train_bpr(sparse_user_item, os.path.join(model_dir, 'bpr'), use_gpu=False)
+    train_svd(sparse_user_item, os.path.join(model_dir, 'svd'))
+
+    # Clear cached models so they reload
+    _cached_models.clear()
+    if hasattr(_load_mappings, '_cache'):
+        del _load_mappings._cache
+
+    print("Models retrained on train data.\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Evaluate recommendation models')
     parser.add_argument('--users', type=int, default=200, help='Max test users')
     parser.add_argument('--min-ratings', type=int, default=10, help='Min ratings per user')
     parser.add_argument('--k', type=int, nargs='+', default=[5, 10, 20], help='K values')
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--load-split', type=str, default=None,
+                        help='Path to saved split JSON (skip re-splitting)')
     args = parser.parse_args()
 
     print("=" * 70)
     print("RECOMMENDATION MODELS EVALUATION")
     print("=" * 70)
 
-    test_data = prepare_test_data(
-        min_ratings=args.min_ratings,
-        max_users=args.users,
-        seed=args.seed,
-    )
+    if args.load_split:
+        test_data = load_split(args.load_split)
+    else:
+        test_data = prepare_test_data(
+            min_ratings=args.min_ratings,
+            max_users=args.users,
+            seed=args.seed,
+        )
+
+    # Retrain MF models on train data only to avoid data leakage
+    _retrain_mf_models(test_data)
 
     # All models: fn(user_id, train_items, train_ratings_dict, num) -> [item_id, ...]
     models = {
         'Item-based CF': lambda uid, train, rd, n: get_item_based_cf_recs(train, n),
-        'Neighborhood CF': lambda uid, train, rd, n: get_neighborhood_cf_recs(uid, train, n),
+        'Neighborhood CF': lambda uid, train, rd, n: get_neighborhood_cf_recs(uid, train, rd, n),
         'Content-Based TF-IDF': lambda uid, train, rd, n: get_content_based_recs(uid, train, rd, n),
         'ALS (implicit)': lambda uid, train, rd, n: get_als_recs(uid, train, n),
         'BPR (implicit)': lambda uid, train, rd, n: get_bpr_recs(uid, train, n),
@@ -449,7 +581,7 @@ def main():
     print(f"\nMetrics at K={k}:")
     print(summary.to_string(index=False))
 
-    output_file = 'evaluation_results.csv'
+    output_file = os.path.join('data', 'results', 'evaluation_results.csv')
     df.to_csv(output_file, index=False)
     print(f"\nFull results saved to {output_file}")
 

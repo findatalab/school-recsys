@@ -19,7 +19,7 @@ def delete_db():
 
 def populate():
     csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            'office_school_interactions.csv')
+                            'data', 'office_school_interactions.csv')
 
     with open(csv_path, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)

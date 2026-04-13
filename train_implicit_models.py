@@ -22,17 +22,16 @@ from analytics.models import Rating
 def check_gpu():
     try:
         import implicit.gpu
+        # Actually test if CUDA works
+        implicit.gpu.als.AlternatingLeastSquares(factors=2)
         return True
     except Exception:
         return False
 
 
-def load_ratings():
-    print("Loading ratings from DB...")
-    data = list(Rating.objects.all().values('user_id', 'movie_id', 'rating'))
-    df = pd.DataFrame(data)
-    print(f"Loaded {len(df)} ratings")
-
+def _build_matrices(df):
+    """Build sparse matrices and mappings from a ratings DataFrame."""
+    df = df.copy()
     df['user_id'] = df['user_id'].astype('category')
     df['movie_id'] = df['movie_id'].astype('category')
 
@@ -54,17 +53,43 @@ def load_ratings():
     return sparse_item_user, sparse_user_item, user_map, item_map, user_to_idx, item_to_idx
 
 
-def train_als(sparse_item_user, save_dir, use_gpu=False):
+def load_ratings():
+    print("Loading ratings from DB...")
+    data = list(Rating.objects.all().values('user_id', 'movie_id', 'rating'))
+    df = pd.DataFrame(data)
+    print(f"Loaded {len(df)} ratings")
+    return _build_matrices(df)
+
+
+def load_ratings_from_split(split_path):
+    """Load only TRAIN ratings from a saved split file."""
+    import json
+    with open(split_path) as f:
+        raw = json.load(f)
+
+    rows = []
+    for user_id, data in raw.items():
+        for item_id, rating in data['train_ratings'].items():
+            rows.append({'user_id': user_id, 'movie_id': item_id, 'rating': float(rating)})
+
+    df = pd.DataFrame(rows)
+    print(f"Loaded {len(df)} TRAIN ratings from split ({len(raw)} users)")
+    return _build_matrices(df)
+
+
+def train_als(sparse_user_item, save_dir, use_gpu=False):
     print("\n=== Training ALS ===")
     os.makedirs(save_dir, exist_ok=True)
 
     model = implicit.als.AlternatingLeastSquares(
-        factors=64,
-        regularization=0.1,
-        iterations=15,
+        factors=128,
+        regularization=0.01,
+        iterations=30,
         use_gpu=use_gpu,
     )
-    confidence = (sparse_item_user * 1.0).astype(np.float32)
+    # Use binary interactions (item was rated) with mild confidence boost
+    confidence = sparse_user_item.copy()
+    confidence.data = np.ones_like(confidence.data, dtype=np.float32)
     model.fit(confidence)
 
     # Convert GPU model to CPU for serialization
@@ -77,18 +102,18 @@ def train_als(sparse_item_user, save_dir, use_gpu=False):
     return model
 
 
-def train_bpr(sparse_item_user, save_dir, use_gpu=False):
+def train_bpr(sparse_user_item, save_dir, use_gpu=False):
     print("\n=== Training BPR ===")
     os.makedirs(save_dir, exist_ok=True)
 
     model = implicit.bpr.BayesianPersonalizedRanking(
-        factors=64,
-        learning_rate=0.05,
-        regularization=0.01,
-        iterations=50,
+        factors=128,
+        learning_rate=0.03,
+        regularization=0.005,
+        iterations=100,
         use_gpu=use_gpu,
     )
-    binary = (sparse_item_user > 0).astype(np.float32)
+    binary = (sparse_user_item > 0).astype(np.float32)
     model.fit(binary)
 
     if use_gpu:
@@ -100,20 +125,45 @@ def train_bpr(sparse_item_user, save_dir, use_gpu=False):
     return model
 
 
-def train_svd(sparse_user_item, save_dir, k=64):
+def train_svd(sparse_user_item, save_dir, k=200):
+    """
+    SVD for ranking: apply truncated SVD to log-scaled interaction matrix.
+    Uses log(1 + rating) to dampen extreme values, then TF-IDF-style
+    normalization to reduce popularity bias.
+
+    Predictions: score(u,i) = U_sigma[u] @ Vt[:, i]  (pure latent ranking)
+    """
     print("\n=== Training SVD ===")
     os.makedirs(save_dir, exist_ok=True)
 
-    U, sigma, Vt = svds(sparse_user_item.astype(float), k=min(k, min(sparse_user_item.shape) - 1))
+    from scipy.sparse import csr_matrix
+
+    mat = csr_matrix(sparse_user_item.astype(float).copy())
+
+    # Boost high ratings: square ratings so 5-star items stand out more
+    mat.data = mat.data ** 2
+
+    # Log-scale to dampen extreme magnitude differences
+    mat.data = np.log1p(mat.data)
+
+    # Row-normalize (L2) so active users don't dominate
+    from sklearn.preprocessing import normalize
+    mat = normalize(mat, norm='l2', axis=1)
+
+    k = min(k, min(mat.shape) - 1)
+    U, sigma, Vt = svds(mat, k=k)
+
+    # Sort by descending singular value
+    idx = np.argsort(-sigma)
+    U = U[:, idx]
+    sigma = sigma[idx]
+    Vt = Vt[idx, :]
 
     np.save(os.path.join(save_dir, 'U.npy'), U)
     np.save(os.path.join(save_dir, 'sigma.npy'), sigma)
     np.save(os.path.join(save_dir, 'Vt.npy'), Vt)
 
-    user_ratings_mean = np.array(sparse_user_item.mean(axis=1)).flatten()
-    np.save(os.path.join(save_dir, 'user_ratings_mean.npy'), user_ratings_mean)
-
-    print(f"SVD model saved to {save_dir} (k={U.shape[1]})")
+    print(f"SVD model saved to {save_dir} (k={U.shape[1]}, top sigma={sigma[0]:.3f})")
 
 
 def save_mappings(user_map, item_map, user_to_idx, item_to_idx, save_dir):
@@ -138,8 +188,8 @@ if __name__ == '__main__':
     base_dir = './models'
     save_mappings(user_map, item_map, user_to_idx, item_to_idx, base_dir)
 
-    train_als(sparse_item_user, os.path.join(base_dir, 'als'), use_gpu=use_gpu)
-    train_bpr(sparse_item_user, os.path.join(base_dir, 'bpr'), use_gpu=use_gpu)
+    train_als(sparse_user_item, os.path.join(base_dir, 'als'), use_gpu=use_gpu)
+    train_bpr(sparse_user_item, os.path.join(base_dir, 'bpr'), use_gpu=use_gpu)
     train_svd(sparse_user_item, os.path.join(base_dir, 'svd'))
 
     print("\n=== All models trained! ===")

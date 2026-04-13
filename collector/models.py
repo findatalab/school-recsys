@@ -3,9 +3,9 @@ from django.db import models
 
 class Log(models.Model):
     created = models.DateTimeField('date happened')
-    user_id = models.CharField(max_length=64)
-    content_id = models.CharField(max_length=32)
-    event = models.CharField(max_length=200)
+    user_id = models.CharField(max_length=64, db_index=True)
+    content_id = models.CharField(max_length=32, db_index=True)
+    event = models.CharField(max_length=200, db_index=True)
     session_id = models.CharField(max_length=128)
 
     def __str__(self):
