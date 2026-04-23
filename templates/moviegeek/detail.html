@@ -20,19 +20,22 @@
     .badge-algo.navy { background: #34495e; }
     .rec-item {
         border: 1px solid #cde;
-        padding: 8px;
-        margin-bottom: 6px;
-        height: 100px;
+        padding: 10px;
+        margin-bottom: 8px;
+        height: 170px;
         overflow: hidden;
         background: #f0f6ff;
         border-radius: 4px;
-        font-size: 11px;
+        font-size: 13px;
+        line-height: 1.35;
     }
+    .rec-item strong { font-size: 13px; }
     .rec-item a { color: #333; text-decoration: none; }
     .rec-row { display: flex; flex-wrap: wrap; }
-    .rec-col { width: 16.66%; padding: 0 4px; box-sizing: border-box; }
+    .rec-col { width: 12.5%; padding: 0 4px; box-sizing: border-box; }
+    @media (max-width: 1200px) { .rec-col { width: 16.66%; } }
     @media (max-width: 992px) { .rec-col { width: 25%; } }
-    @media (max-width: 768px) { .rec-col { width: 50%; } .rec-item { height: 85px; font-size: 10px; } }
+    @media (max-width: 768px) { .rec-col { width: 50%; } .rec-item { height: 150px; font-size: 12px; } }
     @media (max-width: 480px) { .rec-col { width: 50%; } .rec-section h4 { font-size: 13px; } }
 </style>
 {% endblock head %}
@@ -44,8 +47,8 @@
         col.setAttribute('class', 'rec-col');
         col.innerHTML = '<a href="/movies/movie/' + target_id + '/">' +
             '<div class="rec-item">' +
-            '<strong>' + (item.title || '').substring(0, 55) + '</strong><br/>' +
-            (item.price ? '<span style="color:#b12704;">$' + item.price.toFixed(2) + '</span> ' : '') +
+            '<strong>' + (item.title || '').substring(0, 96) + '</strong><br/>' +
+            (item.price ? '<span style="color:#b12704;">' + item.price.toFixed(2) + ' ₽</span> ' : '') +
             (item.average_rating ? '<span style="color:#e8a317;">&#9733; ' + item.average_rating.toFixed(1) + '</span>' : '') +
             '</div></a>';
         row_container.appendChild(col);
@@ -83,15 +86,15 @@
     </div>
     <div class="row">
         <div class="col-sm-8">
-            {% if item %}
-            <div><strong>Description:</strong>
-                <p>{{ item.description_en|truncatewords:80 }}</p>
+            {% if item.description_ru %}
+            <div><strong>Описание:</strong>
+                <p>{{ item.description_ru|truncatewords:80 }}</p>
             </div>
             {% endif %}
 
             {% if item.price %}
             <div><strong>Цена:</strong>
-                <p style="font-size:18px; color:#b12704; font-weight:bold;">${{ item.price }}</p>
+                <p style="font-size:18px; color:#b12704; font-weight:bold;">{{ item.price }} ₽</p>
             </div>
             {% endif %}
 

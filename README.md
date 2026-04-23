@@ -59,13 +59,14 @@ python manage.py runserver 127.0.0.1:8000
 ### 4. Построение матрицы сходства (Item-based CF)
 
 ```bash
-python builder/item_similarity_calculator.py --min_overlap 2 --min_sim 0.0 --data ratings
+python -m builder.item_similarity_calculator
 ```
 
 ### 5. Построение TF-IDF матрицы (Content-Based)
 
 ```bash
-python builder/tfidf_similarity_builder.py
+python build_tfidf_similarity.py
+python build_content_similarity.py
 ```
 
 ### 6. Обучение моделей (ALS, BPR, SVD)

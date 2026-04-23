@@ -5,9 +5,9 @@
     .item-card {
         border: 1px solid #ddd;
         border-radius: 4px;
-        padding: 8px;
+        padding: 10px;
         margin: 4px;
-        height: 110px;
+        height: 170px;
         overflow: hidden;
         cursor: pointer;
         background: #f9f9f9;
@@ -17,41 +17,42 @@
         background: #e9e9e9;
     }
     .item-card .item-title {
-        font-size: 11px;
+        font-size: 13px;
         font-weight: bold;
-        line-height: 1.3;
-        max-height: 28px;  /* exactly 2 lines */
+        line-height: 1.35;
+        max-height: 88px;  /* up to 5 lines */
         overflow: hidden;
         display: -webkit-box;
-        -webkit-line-clamp: 2;
+        -webkit-line-clamp: 5;
         -webkit-box-orient: vertical;
     }
     .item-card .item-price {
-        font-size: 13px;
+        font-size: 14px;
         font-weight: bold;
         color: #b12704;
         margin-top: 4px;
     }
     .item-card .item-rating {
-        font-size: 11px;
+        font-size: 12px;
         color: #e8a317;
         margin-top: 2px;
     }
     .rec-card {
         border: 1px solid #cde;
         border-radius: 4px;
-        padding: 8px;
+        padding: 10px;
         margin: 4px;
-        height: 100px;
+        height: 150px;
         overflow: hidden;
         background: #f0f6ff;
-        font-size: 11px;
+        font-size: 13px;
+        line-height: 1.35;
     }
     .rec-card a { color: #333; }
-    .col-item { width: 16.66%; float: left; padding: 0 5px; box-sizing: border-box; }
-    @media (max-width: 992px) { .col-item { width: 25%; } }
+    .col-item { width: 25%; float: left; padding: 0 5px; box-sizing: border-box; }
+    @media (max-width: 992px) { .col-item { width: 33.33%; } }
     @media (max-width: 768px) { .col-item { width: 50%; } }
-    @media (max-width: 480px) { .col-item { width: 50%; } .item-card { height: 95px; padding: 6px; } .item-card .item-title { font-size: 10px; } }
+    @media (max-width: 480px) { .col-item { width: 50%; } .item-card { height: 150px; padding: 8px; } .item-card .item-title { font-size: 12px; } }
 </style>
 <script>
     function get_cf_recs(userid) {
@@ -70,10 +71,10 @@
         $.getJSON(get_url(id), function(item) {
             var div = document.createElement('div');
             div.setAttribute('class', 'col-xs-2 rec-card');
-            var price_str = item.price ? '$' + item.price.toFixed(2) : '';
+            var price_str = item.price ? item.price.toFixed(2) + ' ₽' : '';
             var rating_str = item.average_rating ? '&#9733; ' + item.average_rating.toFixed(1) : '';
             div.innerHTML = '<a href="/movies/movie/' + id + '/">' +
-                '<strong>' + (item.title || '').substring(0, 60) + '</strong><br/>' +
+                '<strong>' + (item.title || '').substring(0, 96) + '</strong><br/>' +
                 '<span style="color:#b12704;">' + price_str + '</span> ' +
                 '<span style="color:#e8a317;">' + rating_str + '</span></a>';
             container.appendChild(div);
@@ -101,7 +102,7 @@
                             <div class="item-rating">&#9733; {{ item.average_rating }}</div>
                             {% endif %}
                             {% if item.price %}
-                            <div class="item-price">${{ item.price }}</div>
+                            <div class="item-price">{{ item.price }} ₽</div>
                             {% endif %}
                         </div>
                     </a>
